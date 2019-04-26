@@ -2,6 +2,10 @@ import cv2
 import numpy as np
 import copy
 import math
+import time
+from picamera import PiCamera
+from picamera.array import PiRGBArray
+import requests
 #from appscript import app
 
 # Environment:
@@ -61,14 +65,25 @@ def calculateFingers(res,drawing):  # -> finished bool, cnt: finger count
 
 
 # Camera
-camera = cv2.VideoCapture(0)
-camera.set(10,200)
+# camera = cv2.VideoCapture(0)
+# camera.set(10,200)
+FRAME_THRESHOLD = 5
 cv2.namedWindow('trackbar')
 cv2.createTrackbar('trh1', 'trackbar', threshold, 100, printThreshold)
 
+camera = PiCamera()
+camera.resolution = (640, 480)
+camera.framerate = 32
+rawCapture = PiRGBArray(camera, size=(640, 480))
+time.sleep(0.1)
 
-while camera.isOpened():
-    ret, frame = camera.read()
+session = requests.session()
+fcnt = 0
+last_cnt = -1
+for frame in camera.capture_continuous(rawCapture, format='bgr', use_video_port=True):
+    # ret, frame = camera.read()
+    frame = frame.array
+    rawCapture.truncate(0)
     threshold = cv2.getTrackbarPos('trh1', 'trackbar')
     frame = cv2.bilateralFilter(frame, 5, 50, 100)  # smoothing filter
     frame = cv2.flip(frame, 1)  # flip the frame horizontally
@@ -111,10 +126,21 @@ while camera.isOpened():
             cv2.drawContours(drawing, [hull], 0, (0, 0, 255), 3)
 
             isFinishCal,cnt = calculateFingers(res,drawing)
+            if(isFinishCal and cnt == last_cnt):
+                fcnt+=1
+                if(fcnt>=FRAME_THRESHOLD):
+                    fcnt=0
+                    action_dictionary = {1: 'toggle_play', 2: 'stop', 3: 'next_track'}
+                    action = action_dictionary.get(cnt, 'toggle_play')
+                    print("{} emitted".format(action))
+                    session.get('http://0.0.0.0:8080/{}'.format(action))
+            else:
+                fcnt=0
             if triggerSwitch is True:
                 if isFinishCal is True and cnt <= 2:
                     print (cnt)
                     #app('System Events').keystroke(' ')  # simulate pressing blank space
+            last_cnt = cnt
                     
 
         cv2.imshow('output', drawing)
@@ -123,6 +149,7 @@ while camera.isOpened():
     k = cv2.waitKey(10)
     if k == 27:  # press ESC to exit
         camera.release()
+        camera.close()
         cv2.destroyAllWindows()
         break
     elif k == ord('b'):  # press 'b' to capture the background
